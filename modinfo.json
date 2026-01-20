@@ -1,0 +1,14 @@
+{
+  "type": "code",
+  "modid": "stovemod",
+  "name": "Stove",
+  "authors": [
+    "TheHeimZocker"
+  ],
+  "description": "The only stove mod you will ever need",
+  "version": "1.21.6",
+  "side": "universal",
+  "dependencies": {
+    "game": "1.21.6"
+  }
+}

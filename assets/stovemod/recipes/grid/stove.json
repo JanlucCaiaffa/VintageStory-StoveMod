@@ -1,0 +1,41 @@
+{
+  "ingredientPattern": "SIS,F_F,FFF",
+  "ingredients": {
+    "S": {
+      "type": "block",
+      "code": "game:rock-*",
+      "name": "rim",
+      "allowedVariants": [
+        "andesite",
+        "basalt",
+        "bauxite",
+        "chalk",
+        "chert",
+        "claystone",
+        "conglomerate",
+        "granite",
+        "kimberlite",
+        "limestone",
+        "obsidian",
+        "peridotite",
+        "phyllite",
+        "quartzite",
+        "sandstone",
+        "scoria",
+        "shale",
+        "slate",
+        "suevite",
+        "whitemarble"
+      ]
+    },
+    "I": { "type": "item", "code": "game:metalplate-iron" },
+    "F": { "type": "item", "code": "game:burnedbrick-fire" }
+  },
+  "width": 3,
+  "height": 3,
+  "output": {
+    "type": "block",
+    "code": "stovemod:stove-{rim}-south",
+    "quantity": 1
+  }
+}

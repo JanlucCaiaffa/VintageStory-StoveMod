@@ -1,0 +1,95 @@
+{
+  "code": "stove",
+  "class": "BlockStove",
+  "entityClass": "Stove",
+  "creativeinventory": { "general": ["*-south"] },
+  "drawtype": "json",
+  "shape": { "base": "block/stove" },
+  "tpHandTransform": {
+    "rotation": { "x": -180, "y": -180, "z": 112 },
+    "scale": 0.32
+  },
+  "guiTransform": {
+    "rotation": { "x": -20, "y": 30, "z": 0 },
+    "scaleXyz": { "x": -1.09, "y": 1.09, "z": 1.09 }
+  },
+  "sidesolid": { "all": false },
+  "sideopaque": { "all": false },
+  "renderpass": "OpaqueNoCull",
+  "behaviors": [
+    { "name": "HorizontalOrientable" }
+  ],
+  "attributes": {
+    "handbook": {
+      "groupBy": ["stove-*-south"],
+      "extraSections": [
+        {
+          "title": "stovemod:handbook-fuel-title",
+          "text": "stovemod:handbook-fuel-text"
+        }
+      ]
+    }
+  },
+  "shapeByType": {
+    "*-north": { "base": "block/stove" },
+    "*-east": { "base": "block/stove", "rotateY": 270 },
+    "*-south": { "base": "block/stove", "rotateY": 180 },
+    "*-west": { "base": "block/stove", "rotateY": 90 }
+  },
+  "variantgroups": [
+    {
+      "code": "rim",
+      "states": [
+        "andesite",
+        "basalt",
+        "bauxite",
+        "chalk",
+        "chert",
+        "claystone",
+        "conglomerate",
+        "granite",
+        "kimberlite",
+        "limestone",
+        "obsidian",
+        "peridotite",
+        "phyllite",
+        "quartzite",
+        "sandstone",
+        "scoria",
+        "shale",
+        "slate",
+        "suevite",
+        "whitemarble"
+      ]
+    },
+    { "code": "horizontalorientation", "states": ["north", "east", "south", "west"] }
+  ],
+  "textures": {
+    "iron": { "base": "game:block/metal/plate/iron" },
+    "firebrick": { "base": "game:block/clay/bloomery/base" },
+    "cover": { "base": "game:block/clay/hardened/gray" },
+    "nob": { "base": "game:block/clay/hardened/fire2" }
+  },
+  "texturesByType": {
+    "*-andesite-*": { "rim": { "base": "game:block/stone/rock/andesite1" } },
+    "*-basalt-*": { "rim": { "base": "game:block/stone/rock/basalt1" } },
+    "*-bauxite-*": { "rim": { "base": "game:block/stone/rock/bauxite1" } },
+    "*-chalk-*": { "rim": { "base": "game:block/stone/rock/chalk1" } },
+    "*-chert-*": { "rim": { "base": "game:block/stone/rock/chert1" } },
+    "*-claystone-*": { "rim": { "base": "game:block/stone/rock/claystone1" } },
+    "*-conglomerate-*": { "rim": { "base": "game:block/stone/rock/conglomerate1" } },
+    "*-granite-*": { "rim": { "base": "game:block/stone/rock/granite1" } },
+    "*-kimberlite-*": { "rim": { "base": "game:block/stone/rock/kimberlite1" } },
+    "*-limestone-*": { "rim": { "base": "game:block/stone/rock/limestone1" } },
+    "*-obsidian-*": { "rim": { "base": "game:block/stone/rock/obsidian1" } },
+    "*-peridotite-*": { "rim": { "base": "game:block/stone/rock/peridotite1" } },
+    "*-phyllite-*": { "rim": { "base": "game:block/stone/rock/phyllite1" } },
+    "*-quartzite-*": { "rim": { "base": "game:block/stone/rock/quartzite1" } },
+    "*-sandstone-*": { "rim": { "base": "game:block/stone/rock/sandstone1" } },
+    "*-scoria-*": { "rim": { "base": "game:block/stone/rock/scoria1" } },
+    "*-shale-*": { "rim": { "base": "game:block/stone/rock/shale1" } },
+    "*-slate-*": { "rim": { "base": "game:block/stone/rock/slate1" } },
+    "*-suevite-*": { "rim": { "base": "game:block/stone/rock/suevite1" } },
+    "*-whitemarble-*": { "rim": { "base": "game:block/stone/rock/whitemarble1" } }
+  }
+}
