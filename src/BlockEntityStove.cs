@@ -349,6 +349,7 @@ namespace StoveMod
             return path.StartsWith("charcoal") || 
                    path.StartsWith("anthracite") || 
                    path.StartsWith("coal") ||
+                   path.StartsWith("coke") ||
                    path == "ore-anthracite" ||
                    path == "ore-bituminouscoal";
         }
@@ -571,6 +572,7 @@ namespace StoveMod
             
             string fuelPath = FuelSlot.Itemstack.Collectible.Code.Path;
             isCharcoalFuel = fuelPath.StartsWith("charcoal");
+            isCokeFuel = fuelPath.StartsWith("coke");
             
             maxFuelBurnTime = fuelBurnTime = fuelProps.BurnDuration * BurnDurationModifier;
             maxTemperature = (int)(fuelProps.BurnTemperature * HeatModifier);
@@ -581,10 +583,13 @@ namespace StoveMod
         }
 
         bool isCharcoalFuel = false;
+        bool isCokeFuel = false;
 
         int GetMaxDisplayTemperature()
         {
-            return isCharcoalFuel ? 1300 : 1200;
+            if (isCokeFuel) return 1340;
+            if (isCharcoalFuel) return 1300;
+            return 1200;
         }
 
         void SetDialogValues(ITreeAttribute dialogTree)
@@ -991,6 +996,7 @@ namespace StoveMod
             tree.SetDouble("extinguishedTotalHours", extinguishedTotalHours);
             tree.SetBool("canIgniteFuel", canIgniteFuel);
             tree.SetBool("isCharcoalFuel", isCharcoalFuel);
+            tree.SetBool("isCokeFuel", isCokeFuel);
             tree.SetInt("haveCookingContainer", HasCookingContainer ? 1 : 0);
             tree.SetInt("quantityCookingSlots", HasCookingContainer ? 4 : 0);
             
@@ -1010,7 +1016,8 @@ namespace StoveMod
             maxFuelBurnTime = tree.GetFloat("maxFuelBurnTime");
             extinguishedTotalHours = tree.GetDouble("extinguishedTotalHours");
             canIgniteFuel = tree.GetBool("canIgniteFuel", true);
-            isCharcoalFuel = tree.GetBool("isCharcoalFuel", true);
+            isCharcoalFuel = tree.GetBool("isCharcoalFuel", false);
+            isCokeFuel = tree.GetBool("isCokeFuel", false);
             
             if (stoveInventory == null)
             {
