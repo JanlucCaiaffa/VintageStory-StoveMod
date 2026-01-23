@@ -64,6 +64,22 @@ namespace StoveMod
             }
         }
 
+        bool IsVanillaClayPot(ItemStack stack)
+        {
+            if (stack == null) return false;
+            var collectible = stack.Collectible;
+            if (collectible == null) return false;
+            
+            if (!(collectible is BlockCookingContainer) && !(collectible is BlockCookedContainer))
+                return false;
+            
+            if (collectible.Code?.Domain != "game")
+                return false;
+            
+            string path = collectible.Code?.Path ?? "";
+            return path.StartsWith("claypot-") || path.StartsWith("bowl-");
+        }
+
         public void SetContents(ItemStack contentStack, bool isInOutputSlot)
         {
             potRef?.Dispose();
@@ -76,6 +92,14 @@ namespace StoveMod
             IsInOutputSlot = isInOutputSlot;
             
             if (contentStack == null) return;
+            
+            if (!IsVanillaClayPot(contentStack))
+            {
+                if (contentStack.Collectible?.Attributes?["stove"]?["renderMode"]?.AsString() != "claypot")
+                {
+                    return;
+                }
+            }
             
             BlockCookedContainer potBlock = null;
             

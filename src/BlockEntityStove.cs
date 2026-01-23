@@ -7,6 +7,7 @@ using Vintagestory.API.Config;
 using Vintagestory.API.Datastructures;
 using Vintagestory.API.MathTools;
 using Vintagestory.GameContent;
+using StoveMod.API;
 
 namespace StoveMod
 {
@@ -33,6 +34,8 @@ namespace StoveMod
         bool shouldRedraw;
         
         StoveContentsRenderer renderer;
+        StoveCustomRenderer customRenderer;
+        StoveRendererRegistry rendererRegistry;
 
         public override InventoryBase Inventory => stoveInventory;
         public override string InventoryClassName => "stove";
@@ -94,6 +97,12 @@ namespace StoveMod
                 renderer = new StoveContentsRenderer(capi, Pos);
                 capi.Event.RegisterRenderer(renderer, EnumRenderStage.Opaque, "stove");
                 
+                customRenderer = new StoveCustomRenderer(capi, Pos);
+                capi.Event.RegisterRenderer(customRenderer, EnumRenderStage.Opaque, "stove-custom");
+                
+                var modSystem = capi.ModLoader.GetModSystem<StoveModSystem>();
+                rendererRegistry = modSystem?.RendererRegistry;
+                
                 UpdateRenderer();
             }
         }
@@ -149,6 +158,7 @@ namespace StoveMod
             if (Api.Side == EnumAppSide.Client)
             {
                 renderer?.OnUpdate(InputStackTemp);
+                customRenderer?.SetTemperature(InputStackTemp);
                 return;
             }
 
@@ -511,6 +521,7 @@ namespace StoveMod
                             if (Api.Side == EnumAppSide.Client)
                             {
                                 renderer?.OnCookingComplete();
+                                customRenderer?.OnCookingComplete();
                             }
                         }
                     }
@@ -712,6 +723,7 @@ namespace StoveMod
                         if (Api.Side == EnumAppSide.Client)
                         {
                             renderer?.ClearContents();
+                            customRenderer?.ClearAll();
                         }
                         
                         if (byPlayer.InventoryManager.TryGiveItemstack(OutputSlot.Itemstack.Clone()))
@@ -729,6 +741,7 @@ namespace StoveMod
                         if (Api.Side == EnumAppSide.Client)
                         {
                             renderer?.ClearContents();
+                            customRenderer?.ClearAll();
                         }
                         
                         DropCookingSlots();
@@ -835,11 +848,26 @@ namespace StoveMod
 
         public override bool OnTesselation(ITerrainMeshPool mesher, ITesselatorAPI tesselator)
         {
-            ItemStack contentStack = InputSlot.Itemstack ?? OutputSlot.Itemstack;
+            ItemStack inputStack = InputSlot.Itemstack;
+            ItemStack outputStack = OutputSlot.Itemstack;
+            ItemStack contentStack = inputStack ?? outputStack;
             
             if (contentStack != null)
             {
-                if (contentStack.Collectible is BlockCookingContainer || contentStack.Collectible is BlockCookedContainer)
+                bool isCookingContainer = contentStack.Collectible is BlockCookingContainer || 
+                                           contentStack.Collectible is BlockCookedContainer;
+                
+                if (isCookingContainer && ShouldUseCustomPotRenderer(contentStack))
+                {
+                    return false;
+                }
+                
+                bool isInput = contentStack == inputStack;
+                bool hasCustomRenderer = isInput ? 
+                    (customRenderer?.HasInputRenderer == true) : 
+                    (customRenderer?.HasOutputRenderer == true);
+                
+                if (hasCustomRenderer)
                 {
                     return false;
                 }
@@ -883,30 +911,73 @@ namespace StoveMod
             return null;
         }
 
+        bool IsVanillaClayPot(ItemStack stack)
+        {
+            if (stack == null) return false;
+            var collectible = stack.Collectible;
+            if (collectible == null) return false;
+            
+            if (!(collectible is BlockCookingContainer) && !(collectible is BlockCookedContainer))
+                return false;
+            
+            if (collectible.Code?.Domain != "game")
+                return false;
+            
+            string path = collectible.Code?.Path ?? "";
+            return path.StartsWith("claypot-") || path.StartsWith("bowl-");
+        }
+
+        bool ShouldUseCustomPotRenderer(ItemStack stack)
+        {
+            if (stack == null) return false;
+            
+            if (stack.Collectible?.Attributes?["stove"]?["renderMode"]?.AsString() == "claypot")
+                return true;
+            
+            return IsVanillaClayPot(stack);
+        }
+
         void UpdateRenderer()
         {
-            if (renderer == null || Api?.Side != EnumAppSide.Client) return;
+            if (Api?.Side != EnumAppSide.Client) return;
 
             string orientation = Block?.Variant?["horizontalorientation"] ?? "south";
-            renderer.Orientation = orientation;
+            
+            if (renderer != null)
+            {
+                renderer.Orientation = orientation;
+            }
+            if (customRenderer != null)
+            {
+                customRenderer.Orientation = orientation;
+            }
 
-            ItemStack contentStack = InputSlot.Itemstack ?? OutputSlot.Itemstack;
-            bool isInOutputSlot = contentStack == OutputSlot.Itemstack && contentStack != null;
+            ItemStack inputStack = InputSlot.Itemstack;
+            ItemStack outputStack = OutputSlot.Itemstack;
+            ItemStack contentStack = inputStack ?? outputStack;
+            bool isInOutputSlot = contentStack == outputStack && contentStack != null;
+
+            bool isCookingContainer = contentStack?.Collectible is BlockCookingContainer || 
+                                       contentStack?.Collectible is BlockCookedContainer;
+            bool shouldUseVanillaRenderer = isCookingContainer && ShouldUseCustomPotRenderer(contentStack);
 
             bool useOldRenderer =
-                renderer.ContentStack != null &&
+                renderer?.ContentStack != null &&
                 contentStack != null &&
-                (contentStack.Collectible is BlockCookingContainer || contentStack.Collectible is BlockCookedContainer) &&
+                shouldUseVanillaRenderer &&
                 renderer.ContentStack.Equals(Api.World, contentStack, GlobalConstants.IgnoredStackAttributes);
 
-            if (useOldRenderer) return;
-
-            renderer.ClearContents();
-
-            if (contentStack?.Collectible is BlockCookingContainer || contentStack?.Collectible is BlockCookedContainer)
+            if (!useOldRenderer)
             {
-                renderer.SetContents(contentStack, isInOutputSlot);
+                renderer?.ClearContents();
+
+                if (shouldUseVanillaRenderer)
+                {
+                    renderer?.SetContents(contentStack, isInOutputSlot);
+                }
             }
+
+            customRenderer?.UpdateContents(inputStack, outputStack, this, rendererRegistry);
         }
 
         public override void ToTreeAttributes(ITreeAttribute tree)
@@ -1040,6 +1111,7 @@ namespace StoveMod
             if (Api.Side == EnumAppSide.Client)
             {
                 renderer?.ClearContents();
+                customRenderer?.ClearAll();
             }
             
             for (int i = 0; i < stoveInventory.Count; i++)
@@ -1059,6 +1131,7 @@ namespace StoveMod
             if (Api?.Side == EnumAppSide.Client)
             {
                 renderer?.ClearContents();
+                customRenderer?.ClearAll();
             }
             
             base.OnBlockRemoved();
@@ -1066,6 +1139,8 @@ namespace StoveMod
             clientDialog?.Dispose();
             renderer?.Dispose();
             renderer = null;
+            customRenderer?.Dispose();
+            customRenderer = null;
         }
 
         public override void OnBlockUnloaded()
@@ -1073,12 +1148,15 @@ namespace StoveMod
             if (Api?.Side == EnumAppSide.Client)
             {
                 renderer?.ClearContents();
+                customRenderer?.ClearAll();
             }
             
             base.OnBlockUnloaded();
             clientDialog?.TryClose();
             renderer?.Dispose();
             renderer = null;
+            customRenderer?.Dispose();
+            customRenderer = null;
         }
 
         public float GetHeatStrength(IWorldAccessor world, BlockPos heatSourcePos, BlockPos heatReceiverPos)
