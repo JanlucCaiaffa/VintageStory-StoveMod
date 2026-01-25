@@ -80,6 +80,38 @@ namespace StoveMod
             return path.StartsWith("claypot-") || path.StartsWith("bowl-");
         }
 
+        bool IsMealIngredientSafe(ItemStack st)
+        {
+            if (st == null) return false;
+            if (st.Collectible == null) return false;
+            if (st.Collectible.Code == null) return false;
+            
+            if (st.Collectible is Block block)
+            {
+                return block.Shape != null && block.Shape.Base != null;
+            }
+            else if (st.Collectible is Item item)
+            {
+                return item.Shape != null && item.Shape.Base != null;
+            }
+            
+            return false;
+        }
+
+        bool AreMealContentsSafe(ItemStack[] contents)
+        {
+            if (contents == null || contents.Length == 0) return true;
+            
+            foreach (var st in contents)
+            {
+                if (st != null && !IsMealIngredientSafe(st))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         public void SetContents(ItemStack contentStack, bool isInOutputSlot)
         {
             potRef?.Dispose();
@@ -116,13 +148,31 @@ namespace StoveMod
             
             if (isInOutputSlot)
             {
-                MealMeshCache meshcache = capi.ModLoader.GetModSystem<MealMeshCache>();
-                potWithFoodRef = meshcache.GetOrCreateMealInContainerMeshRef(
-                    potBlock, 
-                    potBlock.GetCookingRecipe(capi.World, contentStack), 
-                    potBlock.GetNonEmptyContents(capi.World, contentStack), 
-                    new Vec3f(0, 2.5f/16f, 0)
-                );
+                try
+                {
+                    ItemStack[] contents = potBlock.GetNonEmptyContents(capi.World, contentStack);
+                    
+                    if (!AreMealContentsSafe(contents))
+                    {
+                        capi.Logger.Warning("[Stove] Skipped meal overlay mesh: ingredient has no valid shape");
+                        potWithFoodRef = null;
+                    }
+                    else
+                    {
+                        MealMeshCache meshcache = capi.ModLoader.GetModSystem<MealMeshCache>();
+                        potWithFoodRef = meshcache.GetOrCreateMealInContainerMeshRef(
+                            potBlock, 
+                            potBlock.GetCookingRecipe(capi.World, contentStack), 
+                            contents, 
+                            new Vec3f(0, 2.5f/16f, 0)
+                        );
+                    }
+                }
+                catch (Exception ex)
+                {
+                    capi.Logger.Warning("[Stove] Error generating meal mesh, skipping overlay: " + ex.Message);
+                    potWithFoodRef = null;
+                }
             }
             else
             {

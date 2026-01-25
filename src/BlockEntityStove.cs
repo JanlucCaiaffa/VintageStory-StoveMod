@@ -500,7 +500,7 @@ namespace StoveMod
 
             var collectible = inputStack.Collectible;
 
-            if (collectible is BlockCookingContainer)
+            if (collectible is BlockCookingContainer cookingContainer)
             {
                 ItemStack[] stacks = GetCookingStacks();
                 var recipes = Api.GetCookingRecipes();
@@ -509,34 +509,15 @@ namespace StoveMod
                     CookingRecipe recipe = recipes.FirstOrDefault(r => r.Matches(stacks));
                     if (recipe != null)
                     {
-                        Block cookedBlock = Api.World.GetBlock(collectible.CodeWithVariant("type", "cooked"));
-                        if (cookedBlock != null && cookedBlock is BlockCookedContainerBase cookedContainer)
+                        bool isFirepitStyle = IsFirepitStyleRecipe(recipe, stacks);
+                        
+                        if (isFirepitStyle)
                         {
-                            ItemStack cookedStack = new ItemStack(cookedBlock);
-                            
-                            float quantityServings = recipe.GetQuantityServings(stacks);
-                            
-                            cookedContainer.SetContents(recipe.Code, quantityServings, cookedStack, stacks);
-                            
-                            cookedBlock.SetTemperature(Api.World, cookedStack, InputStackTemp);
-                            
-                            foreach (var slot in CookingSlots)
-                            {
-                                slot.Itemstack = null;
-                                slot.MarkDirty();
-                            }
-                            
-                            InputSlot.Itemstack = null;
-                            InputSlot.MarkDirty();
-                            
-                            OutputSlot.Itemstack = cookedStack;
-                            OutputSlot.MarkDirty();
-                            
-                            if (Api.Side == EnumAppSide.Client)
-                            {
-                                renderer?.OnCookingComplete();
-                                customRenderer?.OnCookingComplete();
-                            }
+                            DoFirepitStyleCompletion(cookingContainer, recipe, stacks);
+                        }
+                        else
+                        {
+                            DoNormalMealCompletion(cookingContainer, recipe, stacks);
                         }
                     }
                 }
@@ -572,6 +553,176 @@ namespace StoveMod
             InputStackTemp = GetEnvironmentTemperature();
             inputStackCookingTime = 0;
             MarkDirty(true);
+        }
+
+        bool IsFirepitStyleRecipe(CookingRecipe recipe, ItemStack[] stacks)
+        {
+            if (recipe == null) return false;
+            
+            if (recipe.CooksInto?.ResolvedItemstack != null)
+            {
+                return true;
+            }
+            
+            bool hasAnyNonRenderableIngredient = false;
+            foreach (var st in stacks)
+            {
+                if (st == null) continue;
+                if (st.Collectible == null) continue;
+                
+                bool isFood = st.Collectible.NutritionProps != null || 
+                              st.Collectible.Attributes?["nutrition"]?.Exists == true;
+                
+                if (!isFood)
+                {
+                    bool hasShape = false;
+                    if (st.Collectible is Block block)
+                        hasShape = block.Shape?.Base != null;
+                    else if (st.Collectible is Item item)
+                        hasShape = item.Shape?.Base != null;
+                    
+                    if (!hasShape)
+                    {
+                        hasAnyNonRenderableIngredient = true;
+                        break;
+                    }
+                    
+                    string domain = st.Collectible.Code?.Domain ?? "game";
+                    if (domain != "game")
+                    {
+                        hasAnyNonRenderableIngredient = true;
+                        break;
+                    }
+                }
+            }
+            
+            return hasAnyNonRenderableIngredient;
+        }
+
+        void DoNormalMealCompletion(BlockCookingContainer cookingContainer, CookingRecipe recipe, ItemStack[] stacks)
+        {
+            ItemStack[] safeStacks = FilterMealSafeStacks(stacks);
+            if (safeStacks.Length == 0)
+            {
+                Api?.Logger?.Warning("[Stove] Cooking aborted at " + Pos + ": no renderable ingredients found");
+                inputStackCookingTime = 0;
+                return;
+            }
+
+            try
+            {
+                Block cookedBlock = Api.World.GetBlock(cookingContainer.CodeWithVariant("type", "cooked"));
+                if (cookedBlock != null && cookedBlock is BlockCookedContainerBase cookedContainer)
+                {
+                    ItemStack cookedStack = new ItemStack(cookedBlock);
+                    
+                    float quantityServings = recipe.GetQuantityServings(safeStacks);
+                    
+                    cookedContainer.SetContents(recipe.Code, quantityServings, cookedStack, safeStacks);
+                    
+                    cookedBlock.SetTemperature(Api.World, cookedStack, InputStackTemp);
+                    
+                    foreach (var slot in CookingSlots)
+                    {
+                        slot.Itemstack = null;
+                        slot.MarkDirty();
+                    }
+                    
+                    InputSlot.Itemstack = null;
+                    InputSlot.MarkDirty();
+                    
+                    OutputSlot.Itemstack = cookedStack;
+                    OutputSlot.MarkDirty();
+                    
+                    if (Api.Side == EnumAppSide.Client)
+                    {
+                        renderer?.OnCookingComplete();
+                        customRenderer?.OnCookingComplete();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Api?.Logger?.Error("[Stove] Error during cooking completion at " + Pos + ": " + ex.Message);
+                inputStackCookingTime = 0;
+            }
+        }
+
+        void DoFirepitStyleCompletion(BlockCookingContainer cookingContainer, CookingRecipe recipe, ItemStack[] stacks)
+        {
+            try
+            {
+                ItemStack outputStack = null;
+                
+                if (recipe.CooksInto?.ResolvedItemstack != null)
+                {
+                    outputStack = recipe.CooksInto.ResolvedItemstack.Clone();
+                    float quantityServings = recipe.GetQuantityServings(stacks);
+                    outputStack.StackSize = (int)Math.Max(1, outputStack.StackSize * quantityServings);
+                }
+                
+                if (outputStack == null)
+                {
+                    Api?.Logger?.Warning("[Stove] Firepit-style cooking aborted at " + Pos + ": no CooksInto output from recipe");
+                    inputStackCookingTime = 0;
+                    return;
+                }
+
+                Block residueBlock = Api.World.GetBlock(cookingContainer.CodeWithVariant("type", "residue"));
+                if (residueBlock == null)
+                {
+                    residueBlock = Api.World.GetBlock(cookingContainer.CodeWithVariant("type", "burned"));
+                }
+                
+                ItemStack resultPotStack;
+                if (residueBlock != null)
+                {
+                    resultPotStack = new ItemStack(residueBlock);
+                }
+                else
+                {
+                    resultPotStack = InputSlot.Itemstack.Clone();
+                }
+
+                foreach (var slot in CookingSlots)
+                {
+                    slot.Itemstack = null;
+                    slot.MarkDirty();
+                }
+
+                InputSlot.Itemstack = resultPotStack;
+                InputSlot.MarkDirty();
+
+                if (OutputSlot.Empty)
+                {
+                    OutputSlot.Itemstack = outputStack.Clone();
+                }
+                else if (OutputSlot.Itemstack.Equals(Api.World, outputStack, GlobalConstants.IgnoredStackAttributes))
+                {
+                    int space = OutputSlot.Itemstack.Collectible.MaxStackSize - OutputSlot.StackSize;
+                    int transfer = Math.Min(space, outputStack.StackSize);
+                    OutputSlot.Itemstack.StackSize += transfer;
+                }
+                else
+                {
+                    Vec3d dropPos = Pos.ToVec3d().Add(0.5, 1.0, 0.5);
+                    Api.World.SpawnItemEntity(outputStack.Clone(), dropPos);
+                }
+                OutputSlot.MarkDirty();
+
+                Api?.Logger?.Notification("[Stove] Firepit-style cooking completed at " + Pos);
+                
+                if (Api.Side == EnumAppSide.Client)
+                {
+                    renderer?.ClearContents();
+                    customRenderer?.ClearAll();
+                }
+            }
+            catch (Exception ex)
+            {
+                Api?.Logger?.Error("[Stove] Error during firepit-style cooking at " + Pos + ": " + ex.Message);
+                inputStackCookingTime = 0;
+            }
         }
 
         public void IgniteFuel()
@@ -1244,6 +1395,33 @@ namespace StoveMod
             if (stack.Collectible == null) return false;
             if (stack.Collectible.Code == null) return false;
             return true;
+        }
+
+        ItemStack[] FilterMealSafeStacks(ItemStack[] stacks)
+        {
+            if (stacks == null) return Array.Empty<ItemStack>();
+            
+            var safe = new System.Collections.Generic.List<ItemStack>();
+            
+            foreach (var st in stacks)
+            {
+                if (st == null) continue;
+                if (st.Collectible == null) continue;
+                if (st.Collectible.Code == null) continue;
+                
+                if (st.Collectible is Block block)
+                {
+                    if (block.Shape == null || block.Shape.Base == null) continue;
+                }
+                else if (st.Collectible is Item item)
+                {
+                    if (item.Shape == null || item.Shape.Base == null) continue;
+                }
+                
+                safe.Add(st);
+            }
+            
+            return safe.ToArray();
         }
 
         public float GetHeatStrength(IWorldAccessor world, BlockPos heatSourcePos, BlockPos heatReceiverPos)
