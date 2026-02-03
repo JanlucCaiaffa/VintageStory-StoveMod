@@ -29,6 +29,7 @@ namespace StoveMod
         
         const float EmptyStoveBurnTimeMulBonus = 4f;
         const bool BurnsAllFuel = true;
+        const float CookingSpeedMultiplier = 1.5f;
         
         bool shouldRedraw;
         
@@ -380,7 +381,7 @@ namespace StoveMod
             if (nowTemp >= meltingPoint)
             {
                 float diff = nowTemp / meltingPoint;
-                inputStackCookingTime += GameMath.Clamp((int)diff, 1, 30) * dt;
+                inputStackCookingTime += GameMath.Clamp((int)diff, 1, 30) * dt * CookingSpeedMultiplier;
             }
             else
             {
