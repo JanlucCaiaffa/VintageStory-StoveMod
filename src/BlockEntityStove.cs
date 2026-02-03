@@ -28,8 +28,8 @@ namespace StoveMod
         public bool canIgniteFuel;
         double extinguishedTotalHours;
         
-        const float HeatModifier = 1.25f;
-        const float BurnDurationModifier = 1.0f;
+        const float EmptyStoveBurnTimeMulBonus = 4f;
+        const bool BurnsAllFuel = true;
         
         bool shouldRedraw;
         
@@ -46,7 +46,7 @@ namespace StoveMod
         public ItemSlot[] CookingSlots => new ItemSlot[] { stoveInventory[3], stoveInventory[4], stoveInventory[5], stoveInventory[6] };
         
         public bool IsBurning => fuelBurnTime > 0;
-        public bool IsSmoldering => canIgniteFuel && !IsBurning;
+        public bool IsSmoldering => canIgniteFuel;
         
         public bool HasCookingContainer
         {
@@ -178,14 +178,16 @@ namespace StoveMod
             if (fuelBurnTime > 0)
             {
                 bool lowFuelConsumption = Math.Abs(furnaceTemperature - maxTemperature) < 50 && InputSlot.Empty;
-                fuelBurnTime -= dt / (lowFuelConsumption ? 1.5f : 1);
-                
+                fuelBurnTime -= dt / (lowFuelConsumption ? EmptyStoveBurnTimeMulBonus : 1);
+
                 if (fuelBurnTime <= 0)
                 {
                     fuelBurnTime = 0;
                     maxFuelBurnTime = 0;
-                    canIgniteFuel = true;
-                    extinguishedTotalHours = Api.World.Calendar.TotalHours;
+                    if (!CanSmelt())
+                    {
+                        extinguishedTotalHours = Api.World.Calendar.TotalHours;
+                    }
                 }
             }
 
@@ -288,7 +290,7 @@ namespace StoveMod
 
         public float GetEnvironmentTemperature()
         {
-            return Api.World.BlockAccessor.GetClimateAt(Pos, EnumGetClimateMode.NowValues)?.Temperature ?? 20;
+            return 20;
         }
 
         public float InputStackTemp
@@ -345,26 +347,12 @@ namespace StoveMod
 
         private bool CanSmelt()
         {
-            if (FuelSlot.Empty) return false;
-            
-            if (!IsValidFuel(FuelSlot.Itemstack)) return false;
-            
-            var fuelProps = FuelSlot.Itemstack?.Collectible?.CombustibleProps;
+            CombustibleProperties fuelProps = FuelCombustibleProps;
             if (fuelProps == null) return false;
-            
-            return fuelProps.BurnTemperature * HeatModifier > 0;
-        }
 
-        private bool IsValidFuel(ItemStack stack)
-        {
-            if (stack == null) return false;
-            string path = stack.Collectible?.Code?.Path ?? "";
-            return path.StartsWith("charcoal") || 
-                   path.StartsWith("anthracite") || 
-                   path.StartsWith("coal") ||
-                   path.StartsWith("coke") ||
-                   path == "ore-anthracite" ||
-                   path == "ore-bituminouscoal";
+            bool smeltableInput = CanHeatInput();
+
+            return (BurnsAllFuel || smeltableInput) && fuelProps.BurnTemperature > 0;
         }
 
         private bool CanHeatInput()
@@ -381,40 +369,38 @@ namespace StoveMod
         private bool CanSmeltInput()
         {
             if (InputSlot.Empty) return false;
-            
+
             var collectible = InputSlot.Itemstack.Collectible;
-            
+
             if (collectible is BlockCookingContainer || collectible is BlockCookedContainer)
             {
                 if (collectible is BlockCookedContainer) return false;
-                
+
                 foreach (var slot in CookingSlots)
                 {
                     if (!slot.Empty) return true;
                 }
                 return false;
             }
-            
-            var combustProps = collectible.CombustibleProps;
-            if (combustProps == null) return false;
-            if (combustProps.RequiresContainer) return false;
-            if (combustProps.SmeltedStack == null) return false;
-            
-            return true;
+
+            if (collectible.OnSmeltAttempt(stoveInventory)) MarkDirty(true);
+
+            return collectible.CanSmelt(Api.World, stoveInventory, InputSlot.Itemstack, OutputSlot.Itemstack)
+                   && (collectible.CombustibleProps == null || !collectible.CombustibleProps.RequiresContainer);
         }
 
         private float GetMaxCookingTime()
         {
             if (InputSlot.Empty) return 30f;
-            
+
             var collectible = InputSlot.Itemstack.Collectible;
-            
+
             if (collectible is BlockCookingContainer || collectible is BlockCookedContainer)
             {
                 return collectible.CombustibleProps?.MeltingDuration ?? 30f;
             }
-            
-            return collectible.CombustibleProps?.MeltingDuration ?? 30f;
+
+            return collectible.GetMeltingDuration(Api.World, stoveInventory, InputSlot);
         }
 
         private void HeatInput(float dt)
@@ -424,7 +410,7 @@ namespace StoveMod
 
             float oldTemp = InputStackTemp;
             float nowTemp = oldTemp;
-            float meltingPoint = inputStack.Collectible.CombustibleProps?.MeltingPoint ?? 100;
+            float meltingPoint = inputStack.Collectible.GetMeltingPoint(Api.World, stoveInventory, InputSlot);
 
             if (oldTemp < furnaceTemperature)
             {
@@ -728,19 +714,17 @@ namespace StoveMod
         public void IgniteFuel()
         {
             if (FuelSlot.Empty) return;
-            
-            if (!IsValidFuel(FuelSlot.Itemstack)) return;
-            
-            var fuelProps = FuelSlot.Itemstack.Collectible.CombustibleProps;
+
+            var fuelProps = FuelCombustibleProps;
             if (fuelProps == null) return;
-            
+
             string fuelPath = FuelSlot.Itemstack.Collectible.Code.Path;
             isCharcoalFuel = fuelPath.StartsWith("charcoal");
             isCokeFuel = fuelPath.StartsWith("coke");
-            
-            maxFuelBurnTime = fuelBurnTime = fuelProps.BurnDuration * BurnDurationModifier;
-            maxTemperature = (int)(fuelProps.BurnTemperature * HeatModifier);
-            
+
+            maxFuelBurnTime = fuelBurnTime = fuelProps.BurnDuration;
+            maxTemperature = (int)fuelProps.BurnTemperature;
+
             FuelSlot.TakeOut(1);
             FuelSlot.MarkDirty();
             MarkDirty(true);
@@ -992,10 +976,10 @@ namespace StoveMod
 
         public void TryIgnite()
         {
-            if (!FuelSlot.Empty && !IsBurning && IsValidFuel(FuelSlot.Itemstack))
+            if (!FuelSlot.Empty && !IsBurning && FuelCombustibleProps != null)
             {
-                IgniteFuel();
                 canIgniteFuel = true;
+                extinguishedTotalHours = Api.World.Calendar.TotalHours;
                 Api.World.PlaySoundAt(new AssetLocation("sounds/effect/fire"), Pos.X + 0.5, Pos.Y + 0.5, Pos.Z + 0.5, null, true, 16);
             }
         }
@@ -1428,5 +1412,7 @@ namespace StoveMod
         {
             return IsBurning ? 10 : (IsSmoldering ? 0.25f : 0);
         }
+
+        CombustibleProperties FuelCombustibleProps => FuelSlot.Itemstack?.Collectible?.CombustibleProps;
     }
 }
