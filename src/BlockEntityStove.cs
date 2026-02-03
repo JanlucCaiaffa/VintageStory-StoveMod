@@ -1,5 +1,4 @@
 using System;
-using System.Linq;
 using System.Text;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
@@ -13,7 +12,7 @@ namespace StoveMod
 {
     public class BlockEntityStove : BlockEntityOpenableContainer, IHeatSource
     {
-        internal InventoryGeneric stoveInventory;
+        internal InventorySmelting stoveInventory;
         GuiDialogBlockEntityStove clientDialog;
         
         public float furnaceTemperature = 20;
@@ -43,7 +42,7 @@ namespace StoveMod
         public ItemSlot FuelSlot => stoveInventory[0];
         public ItemSlot InputSlot => stoveInventory[1];
         public ItemSlot OutputSlot => stoveInventory[2];
-        public ItemSlot[] CookingSlots => new ItemSlot[] { stoveInventory[3], stoveInventory[4], stoveInventory[5], stoveInventory[6] };
+        public ItemSlot[] CookingSlots => stoveInventory?.CookingSlots ?? Array.Empty<ItemSlot>();
         
         public bool IsBurning => fuelBurnTime > 0;
         public bool IsSmoldering => canIgniteFuel;
@@ -52,11 +51,7 @@ namespace StoveMod
         {
             get
             {
-                if (stoveInventory == null || stoveInventory[1]?.Itemstack == null) return false;
-                var collectible = stoveInventory[1].Itemstack.Collectible;
-                return collectible is BlockCookingContainer || 
-                       collectible is BlockCookedContainer ||
-                       collectible is IInFirepitMeshSupplier;
+                return stoveInventory?.HaveCookingContainer == true;
             }
         }
 
@@ -75,26 +70,16 @@ namespace StoveMod
         public float CurrentTemperature => furnaceTemperature;
         public bool HasPot => HasCookingContainer;
 
-        const int MaxCookingSlotStackSize = 6;
-
         public BlockEntityStove()
         {
-            stoveInventory = new InventoryGeneric(7, null, null, null);
-            ConfigureSlots();
-        }
-
-        void ConfigureSlots()
-        {
-            for (int i = 3; i <= 6; i++)
-            {
-                stoveInventory[i].MaxSlotStackSize = MaxCookingSlotStackSize;
-            }
+            stoveInventory = new InventorySmelting(null, null);
         }
 
         public override void Initialize(ICoreAPI api)
         {
             base.Initialize(api);
             
+            stoveInventory.pos = Pos;
             stoveInventory.LateInitialize(InventoryClassName + "-" + Pos, api);
             stoveInventory.SlotModified += OnSlotModified;
             
@@ -133,28 +118,7 @@ namespace StoveMod
                 SetDialogValues(clientDialog.Attributes);
             }
             
-            if (slotId == 1 && !HasCookingContainer)
-            {
-                DropCookingSlots();
-            }
-            
             Api.World.BlockAccessor.GetChunkAtBlockPos(Pos)?.MarkModified();
-        }
-
-        private void DropCookingSlots()
-        {
-            if (Api?.Side != EnumAppSide.Server) return;
-            
-            Vec3d dropPos = Pos.ToVec3d().Add(0.5, 1.0, 0.5);
-            foreach (var slot in CookingSlots)
-            {
-                if (!slot.Empty)
-                {
-                    Api.World.SpawnItemEntity(slot.Itemstack, dropPos);
-                    slot.Itemstack = null;
-                    slot.MarkDirty();
-                }
-            }
         }
 
         private void On500msTick(float dt)
@@ -309,20 +273,21 @@ namespace StoveMod
         {
             if (stack == null) return GetEnvironmentTemperature();
 
-            if (HasCookingContainer)
+            if (CookingSlots.Length > 0)
             {
                 bool haveStack = false;
                 float lowestTemp = 0;
-                foreach (var slot in CookingSlots)
+                for (int i = 0; i < CookingSlots.Length; i++)
                 {
-                    if (!slot.Empty)
+                    ItemStack cookingStack = CookingSlots[i].Itemstack;
+                    if (cookingStack != null)
                     {
-                        float stackTemp = slot.Itemstack.Collectible.GetTemperature(Api.World, slot.Itemstack);
+                        float stackTemp = cookingStack.Collectible.GetTemperature(Api.World, cookingStack);
                         lowestTemp = haveStack ? Math.Min(lowestTemp, stackTemp) : stackTemp;
                         haveStack = true;
                     }
                 }
-                if (haveStack) return lowestTemp;
+                return lowestTemp;
             }
 
             return stack.Collectible.GetTemperature(Api.World, stack);
@@ -332,17 +297,16 @@ namespace StoveMod
         {
             if (stack == null) return;
             
-            if (HasCookingContainer)
+            if (CookingSlots.Length > 0)
             {
-                foreach (var slot in CookingSlots)
+                for (int i = 0; i < CookingSlots.Length; i++)
                 {
-                    slot.Itemstack?.Collectible.SetTemperature(Api.World, slot.Itemstack, value);
+                    CookingSlots[i].Itemstack?.Collectible.SetTemperature(Api.World, CookingSlots[i].Itemstack, value);
                 }
+                return;
             }
-            else
-            {
-                stack.Collectible.SetTemperature(Api.World, stack, value);
-            }
+            
+            stack.Collectible.SetTemperature(Api.World, stack, value);
         }
 
         private bool CanSmelt()
@@ -372,17 +336,6 @@ namespace StoveMod
 
             var collectible = InputSlot.Itemstack.Collectible;
 
-            if (collectible is BlockCookingContainer || collectible is BlockCookedContainer)
-            {
-                if (collectible is BlockCookedContainer) return false;
-
-                foreach (var slot in CookingSlots)
-                {
-                    if (!slot.Empty) return true;
-                }
-                return false;
-            }
-
             if (collectible.OnSmeltAttempt(stoveInventory)) MarkDirty(true);
 
             return collectible.CanSmelt(Api.World, stoveInventory, InputSlot.Itemstack, OutputSlot.Itemstack)
@@ -392,15 +345,7 @@ namespace StoveMod
         private float GetMaxCookingTime()
         {
             if (InputSlot.Empty) return 30f;
-
-            var collectible = InputSlot.Itemstack.Collectible;
-
-            if (collectible is BlockCookingContainer || collectible is BlockCookedContainer)
-            {
-                return collectible.CombustibleProps?.MeltingDuration ?? 30f;
-            }
-
-            return collectible.GetMeltingDuration(Api.World, stoveInventory, InputSlot);
+            return InputSlot.Itemstack.Collectible.GetMeltingDuration(Api.World, stoveInventory, InputSlot);
         }
 
         private void HeatInput(float dt)
@@ -416,15 +361,15 @@ namespace StoveMod
             {
                 float f = (1 + GameMath.Clamp((furnaceTemperature - oldTemp) / 30, 0, 1.6f)) * dt;
                 if (nowTemp >= meltingPoint) f /= 11;
-                
+
                 float newTemp = ChangeTemperature(oldTemp, furnaceTemperature, f);
-                
+
                 int maxTemp = Math.Max(
                     inputStack.Collectible.CombustibleProps?.MaxTemperature ?? 0,
                     inputStack.ItemAttributes?["maxTemperature"]?.AsInt(0) ?? 0
                 );
                 if (maxTemp > 0) newTemp = Math.Min(maxTemp, newTemp);
-                
+
                 if (oldTemp != newTemp)
                 {
                     InputStackTemp = newTemp;
@@ -432,22 +377,10 @@ namespace StoveMod
                 }
             }
 
-            float minCookingTemp = HasCookingContainer ? 150f : meltingPoint;
-            if (nowTemp >= minCookingTemp)
+            if (nowTemp >= meltingPoint)
             {
-                bool hasValidRecipe = true;
-                if (HasCookingContainer)
-                {
-                    ItemStack[] stacks = GetCookingStacks();
-                    var recipes = Api.GetCookingRecipes();
-                    hasValidRecipe = recipes?.FirstOrDefault(r => r.Matches(stacks)) != null;
-                }
-                
-                if (hasValidRecipe)
-                {
-                    float diff = nowTemp / minCookingTemp;
-                    inputStackCookingTime += GameMath.Clamp((int)diff, 1, 30) * dt;
-                }
+                float diff = nowTemp / meltingPoint;
+                inputStackCookingTime += GameMath.Clamp((int)diff, 1, 30) * dt;
             }
             else
             {
@@ -484,231 +417,11 @@ namespace StoveMod
             var inputStack = InputSlot.Itemstack;
             if (inputStack == null) return;
 
-            var collectible = inputStack.Collectible;
-
-            if (collectible is BlockCookingContainer cookingContainer)
-            {
-                ItemStack[] stacks = GetCookingStacks();
-                var recipes = Api.GetCookingRecipes();
-                if (recipes != null)
-                {
-                    CookingRecipe recipe = recipes.FirstOrDefault(r => r.Matches(stacks));
-                    if (recipe != null)
-                    {
-                        bool isFirepitStyle = IsFirepitStyleRecipe(recipe, stacks);
-                        
-                        if (isFirepitStyle)
-                        {
-                            DoFirepitStyleCompletion(cookingContainer, recipe, stacks);
-                        }
-                        else
-                        {
-                            DoNormalMealCompletion(cookingContainer, recipe, stacks);
-                        }
-                    }
-                }
-            }
-            else
-            {
-                var combustProps = collectible.CombustibleProps;
-                if (combustProps?.SmeltedStack != null)
-                {
-                    ItemStack smeltedStack = combustProps.SmeltedStack.ResolvedItemstack?.Clone();
-                    if (smeltedStack != null)
-                    {
-                        smeltedStack.StackSize *= inputStack.StackSize / combustProps.SmeltedRatio;
-                        
-                        if (OutputSlot.Empty)
-                        {
-                            OutputSlot.Itemstack = smeltedStack;
-                        }
-                        else if (OutputSlot.Itemstack.Equals(Api.World, smeltedStack, GlobalConstants.IgnoredStackAttributes))
-                        {
-                            int space = OutputSlot.Itemstack.Collectible.MaxStackSize - OutputSlot.StackSize;
-                            int transfer = Math.Min(space, smeltedStack.StackSize);
-                            OutputSlot.Itemstack.StackSize += transfer;
-                        }
-                        OutputSlot.MarkDirty();
-                        
-                        InputSlot.Itemstack = null;
-                        InputSlot.MarkDirty();
-                    }
-                }
-            }
-            
+            inputStack.Collectible.DoSmelt(Api.World, stoveInventory, InputSlot, OutputSlot);
             InputStackTemp = GetEnvironmentTemperature();
             inputStackCookingTime = 0;
             MarkDirty(true);
-        }
-
-        bool IsFirepitStyleRecipe(CookingRecipe recipe, ItemStack[] stacks)
-        {
-            if (recipe == null) return false;
-            
-            if (recipe.CooksInto?.ResolvedItemstack != null)
-            {
-                return true;
-            }
-            
-            bool hasAnyNonRenderableIngredient = false;
-            foreach (var st in stacks)
-            {
-                if (st == null) continue;
-                if (st.Collectible == null) continue;
-                
-                bool isFood = st.Collectible.NutritionProps != null || 
-                              st.Collectible.Attributes?["nutrition"]?.Exists == true;
-                
-                if (!isFood)
-                {
-                    bool hasShape = false;
-                    if (st.Collectible is Block block)
-                        hasShape = block.Shape?.Base != null;
-                    else if (st.Collectible is Item item)
-                        hasShape = item.Shape?.Base != null;
-                    
-                    if (!hasShape)
-                    {
-                        hasAnyNonRenderableIngredient = true;
-                        break;
-                    }
-                    
-                    string domain = st.Collectible.Code?.Domain ?? "game";
-                    if (domain != "game")
-                    {
-                        hasAnyNonRenderableIngredient = true;
-                        break;
-                    }
-                }
-            }
-            
-            return hasAnyNonRenderableIngredient;
-        }
-
-        void DoNormalMealCompletion(BlockCookingContainer cookingContainer, CookingRecipe recipe, ItemStack[] stacks)
-        {
-            ItemStack[] safeStacks = FilterMealSafeStacks(stacks);
-            if (safeStacks.Length == 0)
-            {
-                Api?.Logger?.Warning("[Stove] Cooking aborted at " + Pos + ": no renderable ingredients found");
-                inputStackCookingTime = 0;
-                return;
-            }
-
-            try
-            {
-                Block cookedBlock = Api.World.GetBlock(cookingContainer.CodeWithVariant("type", "cooked"));
-                if (cookedBlock != null && cookedBlock is BlockCookedContainerBase cookedContainer)
-                {
-                    ItemStack cookedStack = new ItemStack(cookedBlock);
-                    
-                    float quantityServings = recipe.GetQuantityServings(safeStacks);
-                    
-                    cookedContainer.SetContents(recipe.Code, quantityServings, cookedStack, safeStacks);
-                    
-                    cookedBlock.SetTemperature(Api.World, cookedStack, InputStackTemp);
-                    
-                    foreach (var slot in CookingSlots)
-                    {
-                        slot.Itemstack = null;
-                        slot.MarkDirty();
-                    }
-                    
-                    InputSlot.Itemstack = null;
-                    InputSlot.MarkDirty();
-                    
-                    OutputSlot.Itemstack = cookedStack;
-                    OutputSlot.MarkDirty();
-                    
-                    if (Api.Side == EnumAppSide.Client)
-                    {
-                        renderer?.OnCookingComplete();
-                        customRenderer?.OnCookingComplete();
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Api?.Logger?.Error("[Stove] Error during cooking completion at " + Pos + ": " + ex.Message);
-                inputStackCookingTime = 0;
-            }
-        }
-
-        void DoFirepitStyleCompletion(BlockCookingContainer cookingContainer, CookingRecipe recipe, ItemStack[] stacks)
-        {
-            try
-            {
-                ItemStack outputStack = null;
-                
-                if (recipe.CooksInto?.ResolvedItemstack != null)
-                {
-                    outputStack = recipe.CooksInto.ResolvedItemstack.Clone();
-                    float quantityServings = recipe.GetQuantityServings(stacks);
-                    outputStack.StackSize = (int)Math.Max(1, outputStack.StackSize * quantityServings);
-                }
-                
-                if (outputStack == null)
-                {
-                    Api?.Logger?.Warning("[Stove] Firepit-style cooking aborted at " + Pos + ": no CooksInto output from recipe");
-                    inputStackCookingTime = 0;
-                    return;
-                }
-
-                Block residueBlock = Api.World.GetBlock(cookingContainer.CodeWithVariant("type", "residue"));
-                if (residueBlock == null)
-                {
-                    residueBlock = Api.World.GetBlock(cookingContainer.CodeWithVariant("type", "burned"));
-                }
-                
-                ItemStack resultPotStack;
-                if (residueBlock != null)
-                {
-                    resultPotStack = new ItemStack(residueBlock);
-                }
-                else
-                {
-                    resultPotStack = InputSlot.Itemstack.Clone();
-                }
-
-                foreach (var slot in CookingSlots)
-                {
-                    slot.Itemstack = null;
-                    slot.MarkDirty();
-                }
-
-                InputSlot.Itemstack = resultPotStack;
-                InputSlot.MarkDirty();
-
-                if (OutputSlot.Empty)
-                {
-                    OutputSlot.Itemstack = outputStack.Clone();
-                }
-                else if (OutputSlot.Itemstack.Equals(Api.World, outputStack, GlobalConstants.IgnoredStackAttributes))
-                {
-                    int space = OutputSlot.Itemstack.Collectible.MaxStackSize - OutputSlot.StackSize;
-                    int transfer = Math.Min(space, outputStack.StackSize);
-                    OutputSlot.Itemstack.StackSize += transfer;
-                }
-                else
-                {
-                    Vec3d dropPos = Pos.ToVec3d().Add(0.5, 1.0, 0.5);
-                    Api.World.SpawnItemEntity(outputStack.Clone(), dropPos);
-                }
-                OutputSlot.MarkDirty();
-
-                Api?.Logger?.Notification("[Stove] Firepit-style cooking completed at " + Pos);
-                
-                if (Api.Side == EnumAppSide.Client)
-                {
-                    renderer?.ClearContents();
-                    customRenderer?.ClearAll();
-                }
-            }
-            catch (Exception ex)
-            {
-                Api?.Logger?.Error("[Stove] Error during firepit-style cooking at " + Pos + ": " + ex.Message);
-                inputStackCookingTime = 0;
-            }
+            InputSlot.MarkDirty();
         }
 
         public void IgniteFuel()
@@ -754,7 +467,7 @@ namespace StoveMod
             
             if (InputSlot.Itemstack != null)
             {
-                float meltingDuration = InputSlot.Itemstack.Collectible.CombustibleProps?.MeltingDuration ?? 30f;
+                float meltingDuration = InputSlot.Itemstack.Collectible.GetMeltingDuration(Api.World, stoveInventory, InputSlot);
                 dialogTree.SetFloat("oreTemperature", InputStackTemp);
                 dialogTree.SetFloat("maxOreCookingTime", meltingDuration);
             }
@@ -764,63 +477,14 @@ namespace StoveMod
             }
             
             dialogTree.SetString("outputText", GetOutputText());
-            dialogTree.SetInt("haveCookingContainer", HasCookingContainer ? 1 : 0);
-            dialogTree.SetInt("quantityCookingSlots", HasCookingContainer ? 4 : 0);
-            
-            bool hasValidRecipe = false;
-            if (HasCookingContainer)
-            {
-                ItemStack[] stacks = GetCookingStacks();
-                var recipes = Api.GetCookingRecipes();
-                hasValidRecipe = recipes?.FirstOrDefault(r => r.Matches(stacks)) != null;
-            }
-            dialogTree.SetInt("hasValidRecipe", hasValidRecipe ? 1 : 0);
+            dialogTree.SetInt("haveCookingContainer", stoveInventory.HaveCookingContainer ? 1 : 0);
+            dialogTree.SetInt("quantityCookingSlots", stoveInventory.CookingSlots.Length);
+            dialogTree.SetInt("hasValidRecipe", CanSmeltInput() ? 1 : 0);
         }
         
         string GetOutputText()
         {
-            if (HasCookingContainer)
-            {
-                if (HasCookedMealInInput)
-                {
-                    return "";
-                }
-                
-                ItemStack[] stacks = GetCookingStacks();
-                
-                bool hasItems = false;
-                foreach (var stack in stacks)
-                {
-                    if (stack != null) { hasItems = true; break; }
-                }
-                
-                if (!hasItems) return "";
-                
-                var recipes = Api.GetCookingRecipes();
-                if (recipes != null)
-                {
-                    CookingRecipe recipe = recipes.FirstOrDefault(r => r.Matches(stacks));
-                    if (recipe != null)
-                    {
-                        int servings = recipe.GetQuantityServings(stacks);
-                        string recipeName = recipe.GetOutputName(Api.World, stacks);
-                        return $"Will create {servings} servings of {recipeName}";
-                    }
-                }
-                
-                return "No matching recipe found";
-            }
-            return "";
-        }
-        
-        ItemStack[] GetCookingStacks()
-        {
-            ItemStack[] stacks = new ItemStack[4];
-            for (int i = 0; i < 4; i++)
-            {
-                stacks[i] = CookingSlots[i].Itemstack;
-            }
-            return stacks;
+            return stoveInventory?.GetOutputText() ?? "";
         }
 
         public override bool OnPlayerRightClick(IPlayer byPlayer, BlockSelection blockSel)
@@ -920,7 +584,6 @@ namespace StoveMod
                                 customRenderer?.ClearAll();
                             }
                             
-                            DropCookingSlots();
                             if (byPlayer.InventoryManager.TryGiveItemstack(InputSlot.Itemstack.Clone()))
                             {
                                 InputSlot.Itemstack = null;
@@ -1174,8 +837,8 @@ namespace StoveMod
             tree.SetBool("canIgniteFuel", canIgniteFuel);
             tree.SetBool("isCharcoalFuel", isCharcoalFuel);
             tree.SetBool("isCokeFuel", isCokeFuel);
-            tree.SetInt("haveCookingContainer", HasCookingContainer ? 1 : 0);
-            tree.SetInt("quantityCookingSlots", HasCookingContainer ? 4 : 0);
+            tree.SetInt("haveCookingContainer", stoveInventory.HaveCookingContainer ? 1 : 0);
+            tree.SetInt("quantityCookingSlots", stoveInventory.CookingSlots.Length);
             
             ITreeAttribute invtree = new TreeAttribute();
             stoveInventory.ToTreeAttributes(invtree);
@@ -1198,10 +861,10 @@ namespace StoveMod
             
             if (stoveInventory == null)
             {
-                stoveInventory = new InventoryGeneric(7, null, null);
-                ConfigureSlots();
+                stoveInventory = new InventorySmelting(null, null);
             }
             
+            stoveInventory.pos = Pos;
             stoveInventory.FromTreeAttributes(tree.GetTreeAttribute("inventory"));
             
             if (Api != null)
@@ -1379,33 +1042,6 @@ namespace StoveMod
             if (stack.Collectible == null) return false;
             if (stack.Collectible.Code == null) return false;
             return true;
-        }
-
-        ItemStack[] FilterMealSafeStacks(ItemStack[] stacks)
-        {
-            if (stacks == null) return Array.Empty<ItemStack>();
-            
-            var safe = new System.Collections.Generic.List<ItemStack>();
-            
-            foreach (var st in stacks)
-            {
-                if (st == null) continue;
-                if (st.Collectible == null) continue;
-                if (st.Collectible.Code == null) continue;
-                
-                if (st.Collectible is Block block)
-                {
-                    if (block.Shape == null || block.Shape.Base == null) continue;
-                }
-                else if (st.Collectible is Item item)
-                {
-                    if (item.Shape == null || item.Shape.Base == null) continue;
-                }
-                
-                safe.Add(st);
-            }
-            
-            return safe.ToArray();
         }
 
         public float GetHeatStrength(IWorldAccessor world, BlockPos heatSourcePos, BlockPos heatReceiverPos)
